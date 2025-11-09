@@ -121,7 +121,6 @@ def merge_private_coco(query_json_path, query_images_dir, left_rotate_dir, right
         img_meta = shifted_images_by_id.get(img_id)
         if img_meta and 'file_name' in img_meta:
             return Path(img_meta['file_name']).stem
-        # fall back to query images if ids overlap
         for img in query_data['images']:
             if img['id'] == img_id:
                 return Path(img['file_name']).stem
@@ -140,7 +139,6 @@ def merge_private_coco(query_json_path, query_images_dir, left_rotate_dir, right
     print("Processing left_rotate images...")
     left_rotate_dir = Path(left_rotate_dir)
     left_stem_to_files = build_stem_to_files_map(left_rotate_dir)
-
     left_added = 0
     for original_img_id in shifted_image_ids:
         stem = image_id_to_stem(original_img_id)
@@ -149,7 +147,6 @@ def merge_private_coco(query_json_path, query_images_dir, left_rotate_dir, right
         files = left_stem_to_files.get(stem, [])
         if not files:
             continue
-        # For each matching file (in case there are multiple versions), add an image and its annotations
         for matched_file in files:
             max_image_id += 1
             new_img_id = max_image_id
@@ -160,7 +157,6 @@ def merge_private_coco(query_json_path, query_images_dir, left_rotate_dir, right
                 'height': h,
                 'file_name': f"left_rotate/{matched_file.name}"
             })
-            # Remap annotations from shifted to this new image
             for ann in shifted_annotations_by_image[original_img_id]:
                 max_ann_id += 1
                 new_ann = ann.copy()
@@ -172,7 +168,6 @@ def merge_private_coco(query_json_path, query_images_dir, left_rotate_dir, right
     print("Processing right_rotate images...")
     right_rotate_dir = Path(right_rotate_dir)
     right_stem_to_files = build_stem_to_files_map(right_rotate_dir)
-
     right_added = 0
     for original_img_id in shifted_image_ids:
         stem = image_id_to_stem(original_img_id)
