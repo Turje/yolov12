@@ -13,9 +13,9 @@ Usage:
     python scripts/build_private_coco.py \
         --query_json /content/datasets/private/query_images/instances_default.json \
         --query_images_dir /content/datasets/private/query_images \
-        --left_rotate_dir /content/datasets/private/left_rotate \
-        --right_rotate_dir /content/datasets/private/right_rotate \
-        --shifted_json /content/datasets/private/left_rotate/instances_shifted_from_original.json \
+        --left_rotate_dir /content/datasets/private/augmented/left_rotate \
+        --right_rotate_dir /content/datasets/private/augmented/right_rotate \
+        --shifted_json /content/datasets/private/augmented/instances_shifted_from_original.json \
         --output_json /content/datasets/private/merged_private.json
 """
 
@@ -100,115 +100,104 @@ def merge_private_coco(query_json_path, query_images_dir, left_rotate_dir, right
             max_ann_id = max(max_ann_id, ann['id'])
             merged['annotations'].append(new_ann)
     
-    # Process left_rotate images from shifted JSON
+    # Helper: map image_id -> image dict for quick lookups
+    print("Indexing shifted images...")
+    shifted_images_by_id = {img['id']: img for img in shifted_data.get('images', [])}
+    shifted_annotations_by_image = defaultdict(list)
+    for ann in shifted_data['annotations']:
+        shifted_annotations_by_image[ann['image_id']].append(ann)
+    shifted_image_ids = set(shifted_annotations_by_image.keys())
+
+    # Build quick lookup of stems present in left/right dirs
+    def build_stem_to_files_map(directory: Path):
+        stem_to_files = defaultdict(list)
+        for ext in ('*.jpg', '*.jpeg', '*.png'):
+            for p in directory.glob(ext):
+                stem_to_files[p.stem].append(p)
+        return stem_to_files
+
+    # Resolve original stem for an image_id using shifted or query metadata
+    def image_id_to_stem(img_id: int):
+        img_meta = shifted_images_by_id.get(img_id)
+        if img_meta and 'file_name' in img_meta:
+            return Path(img_meta['file_name']).stem
+        # fall back to query images if ids overlap
+        for img in query_data['images']:
+            if img['id'] == img_id:
+                return Path(img['file_name']).stem
+        return None
+
+    # Fetch dimensions from known metadata
+    def image_id_to_dimensions(img_id: int):
+        img_meta = shifted_images_by_id.get(img_id)
+        if img_meta and 'width' in img_meta and 'height' in img_meta:
+            return img_meta['width'], img_meta['height']
+        for img in query_data['images']:
+            if img['id'] == img_id:
+                return img['width'], img['height']
+        return 640, 480
+
     print("Processing left_rotate images...")
     left_rotate_dir = Path(left_rotate_dir)
-    left_image_map = {}  # Map original image IDs to new image IDs
-    
-    # Find images in left_rotate that correspond to annotations in shifted JSON
-    shifted_image_ids = set(ann['image_id'] for ann in shifted_data['annotations'])
-    
-    # Group annotations by image_id
-    left_annotations_by_image = defaultdict(list)
-    for ann in shifted_data['annotations']:
-        left_annotations_by_image[ann['image_id']].append(ann)
-    
-    # Find corresponding images in left_rotate directory
+    left_stem_to_files = build_stem_to_files_map(left_rotate_dir)
+
+    left_added = 0
     for original_img_id in shifted_image_ids:
-        # Try to find the image file
-        # The image might have the same name as in query, or a modified name
-        found_image = None
-        for img_file in left_rotate_dir.glob('*.jpg'):
-            found_image = img_file
-            break
-        for img_file in left_rotate_dir.glob('*.jpeg'):
-            if found_image is None:
-                found_image = img_file
-            break
-        
-        if found_image is None:
-            print(f"Warning: No image found in left_rotate for image_id {original_img_id}")
+        stem = image_id_to_stem(original_img_id)
+        if not stem:
             continue
-        
-        # Create new image entry
-        max_image_id += 1
-        new_img_id = max_image_id
-        
-        # Try to get image dimensions from original or use defaults
-        img_width = 640
-        img_height = 480
-        if original_img_id in query_image_map:
-            orig_img = next((img for img in query_data['images'] if img['id'] == original_img_id), None)
-            if orig_img:
-                img_width = orig_img['width']
-                img_height = orig_img['height']
-        
-        new_img = {
-            'id': new_img_id,
-            'width': img_width,
-            'height': img_height,
-            'file_name': f"left_rotate/{found_image.name}"
-        }
-        merged['images'].append(new_img)
-        left_image_map[original_img_id] = new_img_id
-    
-    # Process left_rotate annotations
-    for ann in shifted_data['annotations']:
-        if ann['image_id'] in left_image_map:
-            max_ann_id += 1
-            new_ann = ann.copy()
-            new_ann['id'] = max_ann_id
-            new_ann['image_id'] = left_image_map[ann['image_id']]
-            merged['annotations'].append(new_ann)
-    
-    # Process right_rotate images (similar to left_rotate)
+        files = left_stem_to_files.get(stem, [])
+        if not files:
+            continue
+        # For each matching file (in case there are multiple versions), add an image and its annotations
+        for matched_file in files:
+            max_image_id += 1
+            new_img_id = max_image_id
+            w, h = image_id_to_dimensions(original_img_id)
+            merged['images'].append({
+                'id': new_img_id,
+                'width': w,
+                'height': h,
+                'file_name': f"left_rotate/{matched_file.name}"
+            })
+            # Remap annotations from shifted to this new image
+            for ann in shifted_annotations_by_image[original_img_id]:
+                max_ann_id += 1
+                new_ann = ann.copy()
+                new_ann['id'] = max_ann_id
+                new_ann['image_id'] = new_img_id
+                merged['annotations'].append(new_ann)
+            left_added += 1
+
     print("Processing right_rotate images...")
     right_rotate_dir = Path(right_rotate_dir)
-    right_image_map = {}
-    
-    # Use the same shifted JSON but map to right_rotate images
+    right_stem_to_files = build_stem_to_files_map(right_rotate_dir)
+
+    right_added = 0
     for original_img_id in shifted_image_ids:
-        found_image = None
-        for img_file in right_rotate_dir.glob('*.jpg'):
-            found_image = img_file
-            break
-        for img_file in right_rotate_dir.glob('*.jpeg'):
-            if found_image is None:
-                found_image = img_file
-            break
-        
-        if found_image is None:
-            print(f"Warning: No image found in right_rotate for image_id {original_img_id}")
+        stem = image_id_to_stem(original_img_id)
+        if not stem:
             continue
-        
-        max_image_id += 1
-        new_img_id = max_image_id
-        
-        img_width = 640
-        img_height = 480
-        if original_img_id in query_image_map:
-            orig_img = next((img for img in query_data['images'] if img['id'] == original_img_id), None)
-            if orig_img:
-                img_width = orig_img['width']
-                img_height = orig_img['height']
-        
-        new_img = {
-            'id': new_img_id,
-            'width': img_width,
-            'height': img_height,
-            'file_name': f"right_rotate/{found_image.name}"
-        }
-        merged['images'].append(new_img)
-        right_image_map[original_img_id] = new_img_id
-    
-    # Process right_rotate annotations
-    for ann in shifted_data['annotations']:
-        if ann['image_id'] in right_image_map:
-            max_ann_id += 1
-            new_ann = ann.copy()
-            new_ann['id'] = max_ann_id
-            new_ann['image_id'] = right_image_map[ann['image_id']]
-            merged['annotations'].append(new_ann)
+        files = right_stem_to_files.get(stem, [])
+        if not files:
+            continue
+        for matched_file in files:
+            max_image_id += 1
+            new_img_id = max_image_id
+            w, h = image_id_to_dimensions(original_img_id)
+            merged['images'].append({
+                'id': new_img_id,
+                'width': w,
+                'height': h,
+                'file_name': f"right_rotate/{matched_file.name}"
+            })
+            for ann in shifted_annotations_by_image[original_img_id]:
+                max_ann_id += 1
+                new_ann = ann.copy()
+                new_ann['id'] = max_ann_id
+                new_ann['image_id'] = new_img_id
+                merged['annotations'].append(new_ann)
+            right_added += 1
     
     # Save merged JSON
     output_path = Path(output_json_path)
@@ -219,6 +208,9 @@ def merge_private_coco(query_json_path, query_images_dir, left_rotate_dir, right
     
     print(f"\nMerged dataset saved to: {output_path}")
     print(f"Total images: {len(merged['images'])}")
+    print(f"  - query_images: {len(query_image_map)}")
+    print(f"  - left_rotate added: {left_added}")
+    print(f"  - right_rotate added: {right_added}")
     print(f"Total annotations: {len(merged['annotations'])}")
     print(f"Categories: {len(merged['categories'])}")
 
