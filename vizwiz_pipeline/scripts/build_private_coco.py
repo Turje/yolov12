@@ -11,12 +11,12 @@ Into a single merged COCO format file.
 
 Usage:
     python scripts/build_private_coco.py \
-        --query_json /content/drive/MyDrive/datasets/private/query_images/instances_default.json \
-        --query_images_dir /content/drive/MyDrive/datasets/private/query_images \
-        --left_rotate_dir /content/drive/MyDrive/datasets/private/left_rotate \
-        --right_rotate_dir /content/drive/MyDrive/datasets/private/right_rotate \
-        --shifted_json /content/drive/MyDrive/datasets/private/left_rotate/instances_shifted_from_original.json \
-        --output_json /content/drive/MyDrive/datasets/private/merged_private.json
+        --query_json /content/datasets/private/query_images/instances_default.json \
+        --query_images_dir /content/datasets/private/query_images \
+        --left_rotate_dir /content/datasets/private/left_rotate \
+        --right_rotate_dir /content/datasets/private/right_rotate \
+        --shifted_json /content/datasets/private/left_rotate/instances_shifted_from_original.json \
+        --output_json /content/datasets/private/merged_private.json
 """
 
 import argparse
