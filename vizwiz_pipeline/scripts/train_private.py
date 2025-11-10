@@ -136,6 +136,10 @@ def train_private(
     print(f"Phase 1: Freeze backbone for {freeze_epochs} epochs")
     print(f"Phase 2: Unfreeze with lr_scale={lr_scale} for {epochs - freeze_epochs} epochs")
     
+    # Force Ultralytics to use our W&B run (not create a new one)
+    from ultralytics import settings
+    settings.update({'wandb': True})  # Explicitly enable W&B
+    
     # Phase 1: Train with frozen backbone
     print("\n=== Phase 1: Training with frozen backbone ===")
     results_phase1 = model.train(
@@ -153,7 +157,7 @@ def train_private(
         seed=seed,
         deterministic=True,
         amp=True,  # Automatic Mixed Precision
-        freeze=22,  # Freeze backbone layers (layer 0-21 in YOLOv12)
+        freeze=10,  # Freeze only first 10 layers (backbone stem + early layers)
         
         # Augmentation settings optimized for BLV user photos
         hsv_h=0.015,
@@ -183,14 +187,17 @@ def train_private(
             # Load model from phase 1 checkpoint
             model_phase2 = YOLO(str(last_checkpoint))
             
+            # Calculate remaining epochs for phase 2
+            remaining_epochs = epochs - freeze_epochs
+            
             results = model_phase2.train(
                 data=str(data_yaml),
-                epochs=epochs,  # Total epochs (will resume from freeze_epochs)
+                epochs=remaining_epochs,  # Only remaining epochs
                 patience=patience,  # Early stopping
                 batch=batch_size,
                 imgsz=img_size,
                 project=str(project_dir),
-                name="private_training",
+                name="private_training2",  # Different name to avoid conflict
                 exist_ok=True,
                 pretrained=False,
                 optimizer="SGD",
@@ -198,7 +205,7 @@ def train_private(
                 seed=seed,
                 deterministic=True,
                 amp=True,
-                resume=True,  # Resume from phase 1
+                resume=False,  # Start fresh, not resume
                 freeze=None,  # Unfreeze all layers
                 lr0=0.01 * lr_scale,  # Scale learning rate
                 
