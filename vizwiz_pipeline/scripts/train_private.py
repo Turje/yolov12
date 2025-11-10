@@ -195,7 +195,7 @@ def train_private(
                 data=str(data_yaml),
                 epochs=remaining_epochs,  # Only remaining epochs
                 patience=patience,  # Early stopping
-                batch=batch_size,
+                batch=4,  # Reduced batch size for unfrozen training (more memory needed)
                 imgsz=img_size,
                 project=str(project_dir),
                 name="private_training2",  # Different name to avoid conflict
