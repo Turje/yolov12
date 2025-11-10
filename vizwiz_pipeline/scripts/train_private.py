@@ -158,6 +158,7 @@ def train_private(
         deterministic=True,
         amp=True,  # Automatic Mixed Precision
         freeze=10,  # Freeze only first 10 layers (backbone stem + early layers)
+        save_json=True,  # Enable COCO evaluation for mAP-S/M/L
         
         # Augmentation settings optimized for BLV user photos
         hsv_h=0.015,
@@ -208,6 +209,7 @@ def train_private(
                 resume=False,  # Start fresh, not resume
                 freeze=None,  # Unfreeze all layers
                 lr0=0.01 * lr_scale,  # Scale learning rate
+                save_json=True,  # Enable COCO evaluation for mAP-S/M/L
                 
                 # Same augmentation settings
                 hsv_h=0.015,
