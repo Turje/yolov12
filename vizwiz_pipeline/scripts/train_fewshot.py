@@ -38,18 +38,16 @@ def train_fewshot(
     batch_size=4,
     freeze_layers=10,
     lr0=0.001,
+    optimizer='Adam',
+    protocol='modern',
     seed=42
 ):
     """
-    Train K-shot model with aggressive regularization.
+    Train K-shot model with two protocol options.
     
-    Few-shot training strategy:
-    - Freeze backbone (first 10 layers) to prevent overfitting
-    - Small batch size (4) for stable gradients
-    - Lower learning rate (0.001) for careful adaptation
-    - High augmentation to maximize data diversity
-    - More epochs (100) to overcome data scarcity
-    - Adam optimizer (better for few-shot than SGD)
+    Protocol Options:
+    - 'paper': Match BIV-Priv-Seg exactly (20 epochs, SGD, minimal aug)
+    - 'modern': Optimized YOLOv12 (100 epochs, Adam, heavy aug)
     
     Args:
         k_shot: Number of shots per class (1, 3, 5, 10)
@@ -59,16 +57,18 @@ def train_fewshot(
         wandb_project: W&B project name
         model_size: YOLO model size (n/s/m/l/x)
         img_size: Input image size
-        epochs: Training epochs
+        epochs: Training epochs (20 for paper, 100 for modern)
         patience: Early stopping patience
         batch_size: Batch size (keep small for few-shot)
         freeze_layers: Number of layers to freeze (10 = backbone stem only)
-        lr0: Initial learning rate (low for few-shot)
+        lr0: Initial learning rate (0.001)
+        optimizer: 'SGD' (paper) or 'Adam' (modern)
+        protocol: 'paper' or 'modern'
         seed: Random seed
     """
     
     print(f"\n{'='*60}")
-    print(f"Training {k_shot}-shot Model")
+    print(f"Training {k_shot}-shot Model (Protocol: {protocol.upper()})")
     print(f"{'='*60}")
     print(f"Checkpoint: {checkpoint}")
     print(f"Data YAML: {data_yaml}")
@@ -76,6 +76,7 @@ def train_fewshot(
     print(f"W&B project: {wandb_project}")
     print(f"K-shot: {k_shot}")
     print(f"Epochs: {epochs}")
+    print(f"Optimizer: {optimizer}")
     print(f"Freeze layers: {freeze_layers}")
     print(f"Learning rate: {lr0}")
     
@@ -84,7 +85,7 @@ def train_fewshot(
     
     wandb.init(
         project=wandb_project,
-        name=f"{k_shot}shot_yolov12{model_size}_finetune",
+        name=f"{k_shot}shot_yolov12{model_size}_{protocol}_seed{seed}",
         config={
             'k_shot': k_shot,
             'architecture': f'yolov12{model_size}',
@@ -94,7 +95,8 @@ def train_fewshot(
             'batch_size': batch_size,
             'lr0': lr0,
             'freeze_layers': freeze_layers,
-            'optimizer': 'Adam',
+            'optimizer': optimizer,
+            'protocol': protocol,
             'seed': seed,
             'training_type': 'few_shot'
         },
@@ -118,6 +120,49 @@ def train_fewshot(
     print(f"Starting {k_shot}-shot training...")
     print(f"{'='*60}")
     
+    # Configure augmentation based on protocol
+    if protocol == 'paper':
+        # Minimal augmentation (match BIV-Priv-Seg)
+        aug_config = {
+            'hsv_h': 0.015,      # Minimal hue
+            'hsv_s': 0.01,       # Minimal saturation
+            'hsv_v': 0.4,        # Brightness only
+            'degrees': 0,        # No rotation
+            'translate': 0,      # No translation
+            'scale': 0,          # No scale
+            'shear': 0,          # No shear
+            'perspective': 0,    # No perspective
+            'flipud': 0.0,       # No vertical flip
+            'fliplr': 0.5,       # Horizontal flip only
+            'bgr': 0.0,
+            'mosaic': 0.0,       # No mosaic
+            'mixup': 0.0,        # No mixup
+            'copy_paste': 0.0,   # No copy-paste
+            'auto_augment': 'none',
+            'erasing': 0.0,      # No erasing
+        }
+    else:  # 'modern'
+        # Heavy augmentation (YOLOv12 optimized)
+        aug_config = {
+            'hsv_h': 0.02,
+            'hsv_s': 0.8,
+            'hsv_v': 0.5,
+            'degrees': 15,
+            'translate': 0.15,
+            'scale': 0.6,
+            'shear': 3.0,
+            'perspective': 0.0002,
+            'flipud': 0.0,
+            'fliplr': 0.5,
+            'bgr': 0.0,
+            'mosaic': 1.0,
+            'mixup': 0.2,
+            'copy_paste': 0.2,
+            'copy_paste_mode': 'flip',
+            'auto_augment': 'randaugment',
+            'erasing': 0.5,
+        }
+    
     results = model.train(
         data=str(data_yaml),
         epochs=epochs,
@@ -125,46 +170,28 @@ def train_fewshot(
         batch=batch_size,
         imgsz=img_size,
         project=str(project_dir),
-        name=f"{k_shot}shot_training",
+        name=f"{k_shot}shot_training_{protocol}_seed{seed}",
         exist_ok=True,
-        pretrained=False,  # Already using checkpoint
-        optimizer="Adam",  # Adam often better for few-shot than SGD
+        pretrained=False,
+        optimizer=optimizer,
         verbose=True,
         seed=seed,
         deterministic=True,
-        amp=True,  # Automatic Mixed Precision
-        freeze=freeze_layers,  # Freeze backbone to prevent overfitting
-        lr0=lr0,  # Lower LR for careful adaptation
-        lrf=0.01,  # Final LR = lr0 * lrf
-        momentum=0.937,
-        weight_decay=0.0005,
+        amp=True,
+        freeze=freeze_layers,
+        lr0=lr0,
+        lrf=0.01,
+        momentum=0.937 if optimizer == 'SGD' else 0.9,
+        weight_decay=0.0001 if protocol == 'paper' else 0.0005,
         warmup_epochs=3.0,
-        warmup_momentum=0.8,
+        warmup_momentum=0.8 if optimizer == 'SGD' else 0.85,
         warmup_bias_lr=0.1,
         box=7.5,
         cls=0.5,
         dfl=1.5,
-        save_json=True,  # Enable COCO evaluation for mAP-S/M/L
-        
-        # AGGRESSIVE augmentation for few-shot (maximize diversity)
-        hsv_h=0.02,        # Slightly more hue variation
-        hsv_s=0.8,         # More saturation variation
-        hsv_v=0.5,         # More brightness variation
-        degrees=15,        # More rotation
-        translate=0.15,    # More translation
-        scale=0.6,         # More scale variation
-        shear=3.0,         # More shear
-        perspective=0.0002, # Slight perspective warp
-        flipud=0.0,        # No vertical flip (documents are upright)
-        fliplr=0.5,        # Horizontal flip OK
-        bgr=0.0,
-        mosaic=1.0,        # Always use mosaic
-        mixup=0.2,         # MORE mixup for few-shot
-        copy_paste=0.2,    # MORE copy-paste for few-shot
-        copy_paste_mode='flip',
-        auto_augment='randaugment',
-        erasing=0.5,       # MORE random erasing
+        save_json=True,
         crop_fraction=1.0,
+        **aug_config
     )
     
     # Validation on best model
@@ -257,6 +284,12 @@ def main():
                         help='Number of layers to freeze (10 = backbone stem)')
     parser.add_argument('--lr0', type=float, default=0.001,
                         help='Initial learning rate (low for few-shot)')
+    parser.add_argument('--optimizer', type=str, default='Adam',
+                        choices=['Adam', 'SGD'],
+                        help='Optimizer (Adam=modern, SGD=paper)')
+    parser.add_argument('--protocol', type=str, default='modern',
+                        choices=['paper', 'modern'],
+                        help='Training protocol (paper=BIV-Priv-Seg match, modern=optimized)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
     
@@ -285,6 +318,8 @@ def main():
         batch_size=args.batch_size,
         freeze_layers=args.freeze_layers,
         lr0=args.lr0,
+        optimizer=args.optimizer,
+        protocol=args.protocol,
         seed=args.seed
     )
 
