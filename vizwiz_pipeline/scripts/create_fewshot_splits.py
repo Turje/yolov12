@@ -154,6 +154,68 @@ def create_k_shot_split(coco_json, k, output_dir, seed=42, include_augmented=Fal
     return output_path
 
 
+def convert_coco_to_yolo_labels(coco_json, base_images_dir):
+    """
+    Convert COCO annotations to YOLO .txt label files.
+    
+    Args:
+        coco_json: Path to COCO JSON file
+        base_images_dir: Root directory where images are stored
+    """
+    with open(coco_json, 'r') as f:
+        data = json.load(f)
+    
+    # Group annotations by image
+    anns_by_image = defaultdict(list)
+    for ann in data['annotations']:
+        anns_by_image[ann['image_id']].append(ann)
+    
+    # Image ID to metadata
+    img_data = {img['id']: img for img in data['images']}
+    
+    count = 0
+    for img_id, anns in anns_by_image.items():
+        img_info = img_data[img_id]
+        img_w = img_info['width']
+        img_h = img_info['height']
+        img_filename = img_info['file_name']
+        
+        # Determine label directory (sibling to image)
+        img_path = Path(base_images_dir) / img_filename
+        label_dir = img_path.parent / 'labels'
+        label_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Convert annotations to YOLO format
+        yolo_lines = []
+        for ann in anns:
+            cat_id = ann['category_id']
+            x, y, w, h = ann['bbox']
+            
+            # Convert to YOLO format (center_x, center_y, width, height) normalized
+            x_center = (x + w / 2) / img_w
+            y_center = (y + h / 2) / img_h
+            w_norm = w / img_w
+            h_norm = h / img_h
+            
+            # Clamp to [0, 1]
+            x_center = max(0, min(1, x_center))
+            y_center = max(0, min(1, y_center))
+            w_norm = max(0, min(1, w_norm))
+            h_norm = max(0, min(1, h_norm))
+            
+            yolo_lines.append(f"{cat_id} {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}\n")
+        
+        # Write label file
+        if yolo_lines:
+            label_file = label_dir / f"{img_path.stem}.txt"
+            with open(label_file, 'w') as f:
+                f.writelines(yolo_lines)
+            count += 1
+    
+    print(f"   ✅ Created {count} YOLO label files")
+    return count
+
+
 def create_fewshot_yaml(k, output_dir, base_images_dir, nc=16, class_names=None):
     """
     Generate YAML configuration for K-shot dataset.
@@ -313,6 +375,10 @@ def main():
             nc,
             class_names
         )
+        
+        # Convert COCO annotations to YOLO label files
+        print(f"\n   Converting COCO annotations to YOLO labels...")
+        convert_coco_to_yolo_labels(k_shot_json, args.base_images_dir)
     
     print(f"\n{'='*60}")
     print(f"✅ All K-shot splits created successfully!")

@@ -15,22 +15,32 @@ from pathlib import Path
 import numpy as np
 
 
-def collect_results(base_dir, seeds, k_shots):
+def collect_results(base_dir, seeds, k_shots, protocol='paper'):
     """Collect results from all seed runs."""
     
     results = []
     
     for seed in seeds:
         for k in k_shots:
-            # Find results.csv for this seed/k combination
-            results_csv = Path(base_dir) / f'seed{seed}' / 'fewshot' / f'{k}shot_training_paper_seed{seed}' / 'results.csv'
+            # Try multiple possible locations (based on how run_paper_protocol.sh saves)
+            possible_paths = [
+                # Path 1: Direct under seed directory (how run_paper_protocol.sh actually saves)
+                Path(base_dir) / f'seed{seed}' / f'{k}shot_training_{protocol}_seed{seed}' / 'results.csv',
+                # Path 2: Under fewshot subdirectory (old structure)
+                Path(base_dir) / f'seed{seed}' / 'fewshot' / f'{k}shot_training_{protocol}_seed{seed}' / 'results.csv',
+                # Path 3: Without protocol suffix
+                Path(base_dir) / f'seed{seed}' / f'{k}shot_training' / 'results.csv',
+            ]
             
-            if not results_csv.exists():
-                # Try alternative naming
-                results_csv = Path(base_dir) / f'seed{seed}' / 'fewshot' / f'{k}shot_training' / 'results.csv'
+            results_csv = None
+            for path in possible_paths:
+                if path.exists():
+                    results_csv = path
+                    break
             
-            if not results_csv.exists():
-                print(f"⚠️  Results not found for seed={seed}, k={k}: {results_csv}")
+            if results_csv is None:
+                print(f"⚠️  Results not found for seed={seed}, k={k}")
+                print(f"    Tried: {possible_paths[0]}")
                 continue
             
             # Read last row (best model)
@@ -154,7 +164,7 @@ def main():
     
     # Collect results
     print(f"\nCollecting results...")
-    df_results = collect_results(args.base_dir, args.seeds, args.k_shots)
+    df_results = collect_results(args.base_dir, args.seeds, args.k_shots, args.protocol)
     
     if df_results.empty:
         print("❌ No results found!")

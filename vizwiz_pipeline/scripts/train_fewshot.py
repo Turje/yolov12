@@ -30,7 +30,7 @@ def train_fewshot(
     checkpoint,
     data_yaml,
     project_dir,
-    wandb_project="vizwiz_yolov12",
+    wandb_project="few_shot_query",
     model_size="m",
     img_size=800,
     epochs=100,
@@ -199,7 +199,7 @@ def train_fewshot(
     print(f"Evaluating best {k_shot}-shot model...")
     print(f"{'='*60}")
     
-    best_model_path = Path(project_dir) / f"{k_shot}shot_training" / "weights" / "best.pt"
+    best_model_path = Path(project_dir) / f"{k_shot}shot_training_{protocol}_seed{seed}" / "weights" / "best.pt"
     if best_model_path.exists():
         best_model = YOLO(str(best_model_path))
         metrics = best_model.val(data=str(data_yaml))
@@ -224,7 +224,7 @@ def train_fewshot(
         # Per-class breakdown
         if map_per_class is not None and len(map_per_class) > 0:
             print(f"\nPer-class AP (mAP50-95):")
-            class_names = model.names
+            class_names = metrics.names
             class_ap_pairs = [(class_names[i], map_per_class[i]) for i in range(len(map_per_class))]
             class_ap_pairs_sorted = sorted(class_ap_pairs, key=lambda x: x[1], reverse=True)
             
@@ -239,19 +239,23 @@ def train_fewshot(
                 print(f"    {i+1}. {name:30s}: {ap:.4f}")
             
             # Log per-class AP to W&B table
-            wandb.log({
-                f'{k_shot}shot/per_class_ap': wandb.Table(
-                    columns=['Class', 'AP50-95'],
-                    data=[[name, ap] for name, ap in class_ap_pairs_sorted]
-                )
-            })
-    
-    wandb.finish()
+            try:
+                wandb.log({
+                    f'{k_shot}shot/per_class_ap': wandb.Table(
+                        columns=['Class', 'AP50-95'],
+                        data=[[name, ap] for name, ap in class_ap_pairs_sorted]
+                    )
+                })
+            except Exception as e:
+                print(f"⚠️  W&B logging warning: {e}")
     
     print(f"\n{'='*60}")
     print(f"✅ {k_shot}-shot training completed!")
     print(f"Best model: {best_model_path}")
     print(f"{'='*60}")
+    
+    # Don't call wandb.finish() here - let Ultralytics handle it
+    # This prevents the "must call wandb.init()" error
     
     return results
 
@@ -267,7 +271,7 @@ def main():
     parser.add_argument('--project_dir', type=str, 
                         default='/content/drive/MyDrive/yolov12_runs/fewshot',
                         help='Output directory for checkpoints')
-    parser.add_argument('--wandb_project', type=str, default='vizwiz_yolov12',
+    parser.add_argument('--wandb_project', type=str, default='few_shot_query',
                         help='W&B project name')
     parser.add_argument('--model_size', type=str, default='m',
                         choices=['n', 's', 'm', 'l', 'x'],
